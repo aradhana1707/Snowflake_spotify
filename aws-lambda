@@ -1,0 +1,104 @@
+import json
+import boto3
+import os
+import pandas as pd
+from datetime import datetime
+from io import StringIO
+
+
+def album(data):
+    album_list=[]
+    for row in data['items']:
+        album_id=row['track']['album']['id']
+        album_name=row['track']['album']['name']
+        album_release_date=row['track']['album']['release_date']
+        album_total_tracks=row['track']['album']['total_tracks']
+        album_url=row['track']['album']['external_urls']['spotify']
+        album_dict={'album_id':album_id,'album_name':album_name,'album_release_date':album_release_date,'album_total_tracks':album_total_tracks,
+                'album_url':album_url}
+        album_list.append(album_dict)
+    return album_list
+
+def artist(data):
+    artist_list=[]
+    for row in data['items']:
+        for j in row['track']['artists']:
+            artist_id=j['id']
+            artist_name=j['name']
+            external_url=j['href']
+            artist_dict={'artist_id':artist_id,'artist_name':artist_name,'external_url':external_url}
+            artist_list.append(artist_dict)
+    return artist_list
+
+
+def lambda_handler(event, context):
+    s3=boto3.client('s3')
+    Bucket="snowflake-spotify"
+    Key="raw_data/to_process/"
+    
+    spotify_data=[]
+    spotify_key=[]
+    for file in s3.list_objects(Bucket=Bucket,Prefix=Key)['Contents']:
+        file_key=file['Key']
+        if file_key.split('.')[-1] == "json":
+            response = s3.get_object(Bucket=Bucket,Key=file_key)
+            content = response['Body']
+            jsonObject = json.loads(content.read())
+            spotify_data.append(jsonObject)
+            spotify_key.append(file_key)
+        
+    for data in spotify_data:
+        album_list=album(data)
+        artist_list=artist(data)
+        
+        
+        album_df=pd.DataFrame(album_list)
+        album_df=album_df.drop_duplicates()
+        album_df['album_release_date']=pd.to_datetime(album_df['album_release_date'])
+        
+        artist_df=pd.DataFrame(artist_list)
+        artist_df=artist_df.drop_duplicates(subset=['artist_id']) 
+       
+        album_key="transformed_data/album_data/" + str(datetime.now()) +'csv'
+        album_buffer=StringIO()
+        album_df.to_csv(album_buffer,index=False)
+        album_content = album_buffer.getvalue()
+        
+        s3.put_object(
+            Bucket=Bucket,
+            Key=album_key,
+            Body=album_content)
+            
+            
+        artist_key="transformed_data/artist_data/" + str(datetime.now()) +'csv'
+        artist_buffer=StringIO()
+        artist_df.to_csv(artist_buffer)
+        artist_content = artist_buffer.getvalue()
+
+       #load data in transformed folder        
+        s3.put_object(
+            Bucket=Bucket,
+            Key=artist_key,
+            Body=artist_content)
+            
+    s3_resource = boto3.resource('s3')
+    for key in spotify_key:
+        copy_source ={
+            'Bucket': Bucket,
+            'Key': key
+            
+        }
+       # transfers data from one folder to other and delete data in previous folder     
+        s3_resource.meta.client.copy(copy_source, Bucket, 'raw_data/processed/' + key.split("/")[-1])    
+        s3_resource.Object(Bucket, key).delete()
+        
+        
+        
+        
+        
+        
+        
+        
+        
+            
+   
