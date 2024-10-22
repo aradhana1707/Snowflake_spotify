@@ -1,0 +1,91 @@
+create database spotify_db;
+create schema spotify_schema;
+
+#STORAGE INTEGRATION
+
+Create or Replace storage integration spotify_int
+TYPE=EXTERNAL_STAGE
+STORAGE_PROVIDER=S3
+ENABLED=TRUE
+STORAGE_AWS_ROLE_ARN="arn:aws:iam::654654433023:role/SPOTIFY_SNOWFLAKE"
+STORAGE_ALLOWED_LOCATIONS=('S3://snowflake-spotify')
+
+DESC INTEGRATION spotify_int;
+
+CREATE TABLE album_data (
+  album_id VARCHAR(255) PRIMARY KEY,
+  album_name VARCHAR(255),
+  album_release_date DATE,
+  album_total_tracks INT,
+  album_url VARCHAR(255)
+);
+
+
+#file format
+
+create or replace file format spotify_format
+type=csv
+field_delimiter=','
+skip_header=1
+field_optionally_enclosed_by='"'
+null_if=('NULL','null')
+empty_field_as_null=True;
+
+#stage
+create or replace stage spotify_stage
+URL ='s3://snowflake-spotify/transformed_data/album_data/'
+storage_integration=spotify_int
+file_format=spotify_format;
+
+#copy data
+
+copy into album_data(album_id,album_name,album_release_date,album_total_tracks,album_url)
+from @spotify_stage
+
+#pipe
+
+create or replace  pipe album_pipe
+auto_ingest=True
+as
+copy into album_data
+from @spotify_stage
+
+desc pipe album_pipe;
+
+show pipes;
+
+select count(*) from album_data;
+
+#artist data
+CREATE TABLE artist_data (
+  artist_id VARCHAR(255) PRIMARY KEY,
+  artist_name VARCHAR(255),
+  external_url VARCHAR(255)
+);
+
+create or replace stage spotify_stage_second
+URL ='s3://snowflake-spotify/transformed_data/artist_data/'
+storage_integration=spotify_int
+file_format=spotify_format;
+
+copy into artist_data(artist_id,artist_name,external_url)
+from @spotify_stage_second
+select * from artist_data
+
+#pipe
+create or replace  pipe artist_pipe
+auto_ingest=True
+as
+copy into artist_data
+from @spotify_stage_second
+
+desc pipe artist_pipe;
+show pipes;
+select count(*) from artist_data
+select count(*) from album_data
+select * from album_data
+
+
+
+
+
